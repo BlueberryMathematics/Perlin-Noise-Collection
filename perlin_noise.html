@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌊 Perlin Noise - Standalone Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+        }
+        
+        #perlin-noise-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+        }
+        
+        #perlin-noise-canvas {
+            image-rendering: pixelated !important;
+            image-rendering: -moz-crisp-edges !important;
+            image-rendering: crisp-edges !important;
+            image-rendering: -webkit-optimize-contrast !important;
+            image-rendering: -webkit-crisp-edges !important;
+            image-rendering: optimize-contrast !important;
+            -ms-interpolation-mode: nearest-neighbor !important;
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: fill;
+        }
+        
+        #controls {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: Arial, sans-serif;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            min-width: 250px;
+        }
+        
+        h3 {
+            margin-top: 0;
+            color: #4CAF50;
+        }
+        
+        label {
+            display: block;
+            margin-top: 15px;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        
+        select, button {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #555;
+            border-radius: 5px;
+            background: #333;
+            color: white;
+        }
+        
+        button {
+            background: #4CAF50;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        .value-display {
+            display: inline;
+            color: #4CAF50;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="perlin-noise-container">
+        <canvas id="perlin-noise-canvas" width="200" height="150"></canvas>
+    </div>
+    
+    <div id="controls">
+        <h3>🌊 Perlin Noise Controls</h3>
+        
+        <label>Preset:</label>
+        <select id="preset-select" onchange="changePreset()">
+            <option value="calm">Calm</option>
+            <option value="moderate" selected>Moderate</option>
+            <option value="turbulent">Turbulent</option>
+            <option value="chaotic">Chaotic</option>
+        </select>
+        
+        <label>Flow Strength: <span id="flow-value" class="value-display">0.3</span></label>
+        <input type="range" id="flow-slider" min="0" max="1" step="0.05" value="0.3" oninput="updateConfig()">
+        
+        <label>Vortex Strength: <span id="vortex-value" class="value-display">0.5</span></label>
+        <input type="range" id="vortex-slider" min="0" max="1" step="0.05" value="0.5" oninput="updateConfig()">
+        
+        <label>Turbulence Scale: <span id="turbulence-value" class="value-display">1.0</span></label>
+        <input type="range" id="turbulence-slider" min="0.1" max="3" step="0.1" value="1.0" oninput="updateConfig()">
+        
+        <label>Animation Speed: <span id="speed-value" class="value-display">2.0</span></label>
+        <input type="range" id="speed-slider" min="0.1" max="2.5" step="0.1" value="2.0" oninput="updateConfig()">
+        
+        <button onclick="toggleAnimation()">Start Animation</button>
+        
+        <div style="margin-top: 20px; font-size: 12px; color: #888;">
+            💡 Adjust controls and click Start Animation<br/>
+            🎨 Try "Chaotic" preset for maximum effect!
+        </div>
+    </div>
+
+    <script>
+        class PerlinNoiseJS {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.width = canvas.width;
+                this.height = canvas.height;
+                
+                // Disable image smoothing for pixelated look - be more aggressive
+                this.ctx.imageSmoothingEnabled = false;
+                this.ctx.webkitImageSmoothingEnabled = false;
+                this.ctx.mozImageSmoothingEnabled = false;
+                this.ctx.msImageSmoothingEnabled = false;
+                this.ctx.oImageSmoothingEnabled = false;
+                
+                // Set image smoothing quality to lowest possible
+                if (this.ctx.imageSmoothingQuality) {
+                    this.ctx.imageSmoothingQuality = 'low';
+                }
+                
+                // Animation state
+                this.isAnimating = false;
+                this.animationId = null;
+                this.timeOffset = 0;
+                
+                // Configuration
+                this.config = {
+                    flowStrength: 0.3,
+                    vortexStrength: 0.5,
+                    turbulenceScale: 1.0,
+                    animationSpeed: 2.0
+                };
+                
+                // Create permutation table
+                this.permutation = [];
+                for (let i = 0; i < 256; i++) {
+                    this.permutation[i] = i;
+                }
+                // Shuffle
+                for (let i = this.permutation.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [this.permutation[i], this.permutation[j]] = [this.permutation[j], this.permutation[i]];
+                }
+                // Duplicate
+                for (let i = 0; i < 256; i++) {
+                    this.permutation[256 + i] = this.permutation[i];
+                }
+                
+                // Pre-compute gradients
+                this.gradTable = [];
+                for (let i = 0; i < 256; i++) {
+                    const angle = (i / 256.0) * 2 * Math.PI;
+                    this.gradTable[i] = [Math.cos(angle), Math.sin(angle)];
+                }
+                
+                // Generate initial frame
+                this.generateFrame();
+            }
+            
+            fade(t) {
+                return t * t * t * (t * (t * 6 - 15) + 10);
+            }
+            
+            lerp(a, b, t) {
+                return a + t * (b - a);
+            }
+            
+            grad(hash, x, y) {
+                const grad = this.gradTable[hash & 255];
+                return grad[0] * x + grad[1] * y;
+            }
+            
+            perlinNoise2D(x, y) {
+                const X = Math.floor(x) & 255;
+                const Y = Math.floor(y) & 255;
+                
+                x = x - Math.floor(x);
+                y = y - Math.floor(y);
+                
+                const u = this.fade(x);
+                const v = this.fade(y);
+                
+                const A = this.permutation[X] + Y;
+                const AA = this.permutation[A & 255];
+                const AB = this.permutation[(A + 1) & 255];
+                const B = this.permutation[(X + 1) & 255] + Y;
+                const BA = this.permutation[B & 255];
+                const BB = this.permutation[(B + 1) & 255];
+                
+                return this.lerp(
+                    this.lerp(
+                        this.grad(AA, x, y),
+                        this.grad(BA, x - 1, y),
+                        u
+                    ),
+                    this.lerp(
+                        this.grad(AB, x, y - 1),
+                        this.grad(BB, x - 1, y - 1),
+                        u
+                    ),
+                    v
+                );
+            }
+            
+            generateFrame() {
+                const imageData = this.ctx.createImageData(this.width, this.height);
+                const data = imageData.data;
+                
+                // Match PyQt6 time handling exactly
+                const timeFactor = this.timeOffset * 0.02 * this.config.animationSpeed;
+                
+                for (let y = 0; y < this.height; y++) {
+                    for (let x = 0; x < this.width; x++) {
+                        // Normalized coordinates (0-1) - exactly like PyQt6
+                        const nx = x / this.width;
+                        const ny = y / this.height;
+                        
+                        // Configurable flow field using sine/cosine functions - exactly like PyQt6
+                        const flowX = Math.sin(nx * Math.PI * 2 * this.config.turbulenceScale + timeFactor) * 
+                                     Math.cos(ny * Math.PI * 3 * this.config.turbulenceScale);
+                        const flowY = Math.cos(nx * Math.PI * 3 * this.config.turbulenceScale + timeFactor) * 
+                                     Math.sin(ny * Math.PI * 2 * this.config.turbulenceScale);
+                        
+                        // Configurable vortex patterns - exactly like PyQt6
+                        const vortex1X = 0.3, vortex1Y = 0.3;
+                        const vortex2X = 0.7, vortex2Y = 0.7;
+                        
+                        // Distance and angle from vortex centers
+                        const d1 = Math.sqrt((nx - vortex1X) ** 2 + (ny - vortex1Y) ** 2);
+                        const a1 = Math.atan2(ny - vortex1Y, nx - vortex1X);
+                        
+                        const d2 = Math.sqrt((nx - vortex2X) ** 2 + (ny - vortex2Y) ** 2);
+                        const a2 = Math.atan2(ny - vortex2Y, nx - vortex2X);
+                        
+                        // Configurable vortex influence - exactly like PyQt6
+                        const baseVortexStrength1 = 1.0 / (1.0 + d1 * 5);
+                        const baseVortexStrength2 = 1.0 / (1.0 + d2 * 5);
+                        
+                        const vortexStrength1 = baseVortexStrength1 * this.config.vortexStrength;
+                        const vortexStrength2 = baseVortexStrength2 * this.config.vortexStrength;
+                        
+                        // Rotating vortex motion with configurable strength - exactly like PyQt6
+                        const vortex1XOffset = Math.cos(a1 + timeFactor * 2) * vortexStrength1 * 0.5;
+                        const vortex1YOffset = Math.sin(a1 + timeFactor * 2) * vortexStrength1 * 0.5;
+                        
+                        const vortex2XOffset = Math.cos(a2 - timeFactor * 1.5) * vortexStrength2 * 0.5;
+                        const vortex2YOffset = Math.sin(a2 - timeFactor * 1.5) * vortexStrength2 * 0.5;
+                        
+                        // Combine all movement influences with configurable strength - exactly like PyQt6
+                        const finalX = x * 0.1 + (flowX * this.config.flowStrength) + vortex1XOffset + vortex2XOffset;
+                        const finalY = y * 0.1 + (flowY * this.config.flowStrength) + vortex1YOffset + vortex2YOffset;
+                        
+                        // Multi-octave noise with the complex movement - exactly like PyQt6
+                        let noiseVal = this.perlinNoise2D(finalX, finalY) * 0.6 +
+                                      this.perlinNoise2D(finalX * 2, finalY * 2) * 0.3 +
+                                      this.perlinNoise2D(finalX * 4, finalY * 4) * 0.1;
+                        
+                        // Normalize to 0-1 - exactly like PyQt6
+                        noiseVal = (noiseVal + 1) * 0.5;
+                        noiseVal = Math.max(0.0, Math.min(1.0, noiseVal));
+                        
+                        // Color mapping with configurable flow influence - exactly like PyQt6
+                        const flowColorInfluence = flowX * 0.2 * this.config.flowStrength;
+                        const colorCycle = (noiseVal * 2 + timeFactor * 0.5 + flowColorInfluence) % 1.0;
+                        
+                        let r, g, b;
+                        if (colorCycle < 0.33) {
+                            // Blue to purple - exactly like PyQt6
+                            r = 30 + noiseVal * 60;
+                            g = 50 + noiseVal * 80;
+                            b = 120 + noiseVal * 100;
+                        } else if (colorCycle < 0.66) {
+                            // Purple to teal - exactly like PyQt6
+                            r = 60 + noiseVal * 40;
+                            g = 100 + noiseVal * 120;
+                            b = 150 + noiseVal * 80;
+                        } else {
+                            // Teal to blue - exactly like PyQt6
+                            r = 20 + noiseVal * 80;
+                            g = 80 + noiseVal * 100;
+                            b = 180 + noiseVal * 60;
+                        }
+                        
+                        // Apply brightness variation - exactly like PyQt6
+                        const brightness = 0.7 + noiseVal * 0.6;
+                        r = Math.min(255, Math.floor(r * brightness));
+                        g = Math.min(255, Math.floor(g * brightness));
+                        b = Math.min(255, Math.floor(b * brightness));
+                        
+                        const index = (y * this.width + x) * 4;
+                        data[index] = r;     // Red
+                        data[index + 1] = g; // Green
+                        data[index + 2] = b; // Blue
+                        data[index + 3] = 255; // Alpha
+                    }
+                }
+                
+                this.ctx.putImageData(imageData, 0, 0);
+            }
+            
+            animate() {
+                if (!this.isAnimating) return;
+                
+                this.timeOffset += this.config.animationSpeed;
+                if (this.timeOffset > 1000) this.timeOffset = 0;
+                
+                this.generateFrame();
+                this.animationId = requestAnimationFrame(() => this.animate());
+            }
+            
+            startAnimation() {
+                if (this.isAnimating) return;
+                this.isAnimating = true;
+                this.animate();
+            }
+            
+            stopAnimation() {
+                this.isAnimating = false;
+                if (this.animationId) {
+                    cancelAnimationFrame(this.animationId);
+                    this.animationId = null;
+                }
+            }
+            
+            setPreset(presetName) {
+                const presets = {
+                    "calm": {
+                        flowStrength: 0.1,
+                        vortexStrength: 0.2,
+                        turbulenceScale: 0.8,
+                        animationSpeed: 0.5
+                    },
+                    "moderate": {
+                        flowStrength: 0.3,
+                        vortexStrength: 0.5,
+                        turbulenceScale: 1.0,
+                        animationSpeed: 2.0
+                    },
+                    "turbulent": {
+                        flowStrength: 0.7,
+                        vortexStrength: 0.8,
+                        turbulenceScale: 1.5,
+                        animationSpeed: 3.0
+                    },
+                    "chaotic": {
+                        flowStrength: 1.0,
+                        vortexStrength: 1.0,
+                        turbulenceScale: 2.0,
+                        animationSpeed: 2.5
+                    }
+                };
+                
+                if (presets[presetName]) {
+                    this.config = {...presets[presetName]};
+                    this.updateUI();
+                    if (!this.isAnimating) {
+                        this.generateFrame();
+                    }
+                }
+            }
+            
+            updateUI() {
+                document.getElementById('flow-slider').value = this.config.flowStrength;
+                document.getElementById('vortex-slider').value = this.config.vortexStrength;
+                document.getElementById('turbulence-slider').value = this.config.turbulenceScale;
+                document.getElementById('speed-slider').value = this.config.animationSpeed;
+                
+                document.getElementById('flow-value').textContent = this.config.flowStrength.toFixed(1);
+                document.getElementById('vortex-value').textContent = this.config.vortexStrength.toFixed(1);
+                document.getElementById('turbulence-value').textContent = this.config.turbulenceScale.toFixed(1);
+                document.getElementById('speed-value').textContent = this.config.animationSpeed.toFixed(1);
+            }
+        }
+        
+        // Global variables
+        let perlinNoise;
+        let animationButton;
+        
+        // Initialize when page loads
+        window.onload = function() {
+            const canvas = document.getElementById('perlin-noise-canvas');
+            animationButton = document.querySelector('button');
+            
+            // Make pixels even sharper by using a smaller scale factor
+            canvas.width = Math.floor(window.innerWidth / 8);  // Smaller canvas for bigger pixels
+            canvas.height = Math.floor(window.innerHeight / 8);
+            
+            // Set the CSS size to be exactly divisible by the canvas size for sharp pixels
+            const pixelSize = 8; // Each canvas pixel becomes 8x8 screen pixels
+            canvas.style.width = (canvas.width * pixelSize) + 'px';
+            canvas.style.height = (canvas.height * pixelSize) + 'px';
+            
+            perlinNoise = new PerlinNoiseJS(canvas);
+            
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                canvas.width = Math.floor(window.innerWidth / 8);
+                canvas.height = Math.floor(window.innerHeight / 8);
+                canvas.style.width = (canvas.width * pixelSize) + 'px';
+                canvas.style.height = (canvas.height * pixelSize) + 'px';
+                perlinNoise.width = canvas.width;
+                perlinNoise.height = canvas.height;
+                perlinNoise.generateFrame();
+            });
+        };
+        
+        function changePreset() {
+            const preset = document.getElementById('preset-select').value;
+            perlinNoise.setPreset(preset);
+        }
+        
+        function updateConfig() {
+            perlinNoise.config.flowStrength = parseFloat(document.getElementById('flow-slider').value);
+            perlinNoise.config.vortexStrength = parseFloat(document.getElementById('vortex-slider').value);
+            perlinNoise.config.turbulenceScale = parseFloat(document.getElementById('turbulence-slider').value);
+            perlinNoise.config.animationSpeed = parseFloat(document.getElementById('speed-slider').value);
+            
+            document.getElementById('flow-value').textContent = perlinNoise.config.flowStrength.toFixed(1);
+            document.getElementById('vortex-value').textContent = perlinNoise.config.vortexStrength.toFixed(1);
+            document.getElementById('turbulence-value').textContent = perlinNoise.config.turbulenceScale.toFixed(1);
+            document.getElementById('speed-value').textContent = perlinNoise.config.animationSpeed.toFixed(1);
+            
+            if (!perlinNoise.isAnimating) {
+                perlinNoise.generateFrame();
+            }
+        }
+        
+        function toggleAnimation() {
+            if (perlinNoise.isAnimating) {
+                perlinNoise.stopAnimation();
+                animationButton.textContent = 'Start Animation';
+            } else {
+                perlinNoise.startAnimation();
+                animationButton.textContent = 'Stop Animation';
+            }
+        }
+    </script>
+</body>
+</html>
