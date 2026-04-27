@@ -120,7 +120,7 @@
     background: rgba(255, 255, 255, 0.12);
   }
 
-  /* Invisible hover zone in top-right corner to reveal the picker */
+  /* Invisible hover zone in top-right corner to reveal the reopen button */
   #hover-zone {
     position: fixed;
     top: 0;
@@ -129,12 +129,59 @@
     height: 120px;
     z-index: 9;
   }
+
+  /* Small button that appears on hover to reopen the palette */
+  #reopenBtn {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(15, 10, 25, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #f0e8ff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    z-index: 10;
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease, background 0.15s ease;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+  #reopenBtn.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  #reopenBtn:hover {
+    background: rgba(40, 25, 60, 0.9);
+  }
+  #reopenBtn svg {
+    width: 16px;
+    height: 16px;
+    stroke: #d8c8ff;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 </style>
 </head>
 <body>
 <canvas id="glcanvas"></canvas>
 
 <div id="hover-zone"></div>
+
+<button id="reopenBtn" title="Show palette">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+</button>
 
 <div id="picker">
   <div class="header">
@@ -143,19 +190,19 @@
   </div>
   <div class="row">
     <label for="cDark">Dark</label>
-    <input type="color" id="cDark" value="#0a0314">
+    <input type="color" id="cDark" value="#02060a">
   </div>
   <div class="row">
-    <label for="cPurple">Purple</label>
-    <input type="color" id="cPurple" value="#380a5c">
+    <label for="cPurple">Mid</label>
+    <input type="color" id="cPurple" value="#1e4480">
   </div>
   <div class="row">
-    <label for="cMag">Magenta</label>
-    <input type="color" id="cMag" value="#8c1aa6">
+    <label for="cMag">Accent</label>
+    <input type="color" id="cMag" value="#60a5ff">
   </div>
   <div class="row">
     <label for="cLight">Highlight</label>
-    <input type="color" id="cLight" value="#dbc7f2">
+    <input type="color" id="cLight" value="#e8f4ff">
   </div>
   <button class="reset" id="resetBtn">Reset</button>
 </div>
@@ -303,12 +350,12 @@ void main() {
   float depth = pow(smoothstep(0.0, 0.55, 1.0 - marble), 1.4);
 
   // Color palette — now driven by uniforms from the UI
-  vec3 col = mix(u_cDark, u_cPurple, smoothstep(0.0, 0.5, marble));
-  col      = mix(col,    u_cMag,    smoothstep(0.45, 0.8, marble));
-  col      = mix(col,    u_cLight,  sheen);
+  vec3 col = mix(u_cDark, u_cPurple, smoothstep(0.0, 0.4, marble));
+  col      = mix(col,    u_cMag,    smoothstep(0.35, 0.75, marble));
+  col      = mix(col,    u_cLight,  pow(sheen, 1.4));
 
-  // Add a touch of extra glow to the brightest edges (tinted toward highlight)
-  col += sheen * (u_cLight * 0.35);
+  // Tint the extra glow with the accent color so it reads as blue, not white
+  col += sheen * (u_cMag * 0.4);
 
   // Slight vignette so edges feel deeper
   float vig = smoothstep(1.1, 0.3, length(uv));
@@ -377,10 +424,10 @@ void main() {
 
   // ---------- Color picker wiring ----------
   const DEFAULTS = {
-    cDark:   '#0a0314',
-    cPurple: '#380a5c',
-    cMag:    '#8c1aa6',
-    cLight:  '#dbc7f2'
+    cDark:   '#02060a',
+    cPurple: '#1e4480',
+    cMag:    '#60a5ff',
+    cLight:  '#e8f4ff'
   };
 
   function hexToRgb(hex) {
@@ -415,13 +462,39 @@ void main() {
   const picker = document.getElementById('picker');
   const hoverZone = document.getElementById('hover-zone');
   const hideBtn = document.getElementById('hideBtn');
+  const reopenBtn = document.getElementById('reopenBtn');
+
+  let hideTimer = null;
+
+  function showReopenBtn() {
+    clearTimeout(hideTimer);
+    reopenBtn.classList.add('visible');
+  }
+  function scheduleHideReopenBtn() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      reopenBtn.classList.remove('visible');
+    }, 600);
+  }
 
   hideBtn.addEventListener('click', () => {
     picker.classList.add('hidden');
   });
 
+  // Hovering the corner reveals the reopen button (only when picker is hidden)
   hoverZone.addEventListener('mouseenter', () => {
+    if (picker.classList.contains('hidden')) showReopenBtn();
+  });
+  hoverZone.addEventListener('mouseleave', scheduleHideReopenBtn);
+
+  // Keep the button visible while the cursor is on it
+  reopenBtn.addEventListener('mouseenter', showReopenBtn);
+  reopenBtn.addEventListener('mouseleave', scheduleHideReopenBtn);
+
+  // Clicking the button brings the palette back
+  reopenBtn.addEventListener('click', () => {
     picker.classList.remove('hidden');
+    reopenBtn.classList.remove('visible');
   });
 
   // Reset
